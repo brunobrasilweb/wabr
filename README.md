@@ -61,3 +61,15 @@ Se quiser executar em outra porta, defina a variável de ambiente `PORT` antes d
 ```powershell
 $env:PORT = '4000'; npm run build; node dist/main.js
 ```
+
+Swagger UI
+
+Depois de iniciar a aplicação, a documentação Swagger estará disponível em:
+
+```powershell
+# por padrão
+http://localhost:8080/docs
+
+# se alterou a porta
+http://localhost:<PORT>/docs
+```

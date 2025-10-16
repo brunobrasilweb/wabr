@@ -1,8 +1,8 @@
 # Node
-node_modules/
+
 
 # Build output
-dist/
+
 coverage/
 
 # Environment variables
