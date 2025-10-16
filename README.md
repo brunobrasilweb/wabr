@@ -35,6 +35,27 @@ Invoke-RestMethod -Uri http://localhost:8080/ -UseBasicParsing
 # Deve retornar: Hello World!
 ```
 
+Conectando ao Postgres
+
+1. Crie um arquivo `.env` baseado em `.env.example` e ajuste as variáveis de conexão:
+
+```powershell
+cp .env.example .env
+# abra e ajuste DB_HOST, DB_USER, DB_PASS, DB_NAME se necessário
+```
+
+2. Instale dependências e rode a aplicação (uma vez):
+
+```powershell
+npm install
+npm run build
+node dist/main.js
+```
+
+Observações:
+- A opção `DB_SYNC=true` fará o TypeORM sincronizar automaticamente o schema (apenas para desenvolvimento).
+- Para produção, mantenha `DB_SYNC=false` e use migrations.
+
 Se quiser executar em outra porta, defina a variável de ambiente `PORT` antes de iniciar:
 
 ```powershell
