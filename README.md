@@ -1,75 +1,15 @@
-# wabr-nest-hello
+# wabr - API não oficial para Whatsapp
 
-Projeto NestJS mínimo que expõe um endpoint REST `GET /` que retorna "Hello World!".
+Projeto NestJS mínimo que expõe um endpoint REST `GET /` e contém módulos básicos para gerenciamento de clients e autenticação por token.
 
-Requisitos
-- Node.js (>= 18 recomendado)
-- npm
+Toda a documentação técnica está centralizada na pasta `docs/`.
 
-Rodando localmente (PowerShell)
+Principais documentos:
 
-1. Instalar dependências:
+- `docs/TECHNICAL_DOCUMENTATION.md` — Visão geral completa do projeto, modelos de dados, fluxo de autenticação e boas práticas.
+- `docs/ARCHITECTURE.md` — Arquitetura e diagramas lógicos.
+- `docs/SETUP_AND_RUN.md` — Como configurar, executar e empacotar a aplicação.
+- `docs/API.md` — Endpoints disponíveis, contratos e exemplos de uso.
+- `docs/CONTRIBUTING.md` — Como contribuir e padrões do repositório.
 
-```powershell
-cd 'c:/Users/bruno/Inoovexa/Workspace/wabr'
-npm install
-```
-
-2. Rodar em modo desenvolvimento (hot-reload):
-
-```powershell
-npm run start:dev
-```
-
-3. Ou build + node:
-
-```powershell
-npm run build
-node dist/main.js
-```
-
-4. Testar endpoint:
-
-```powershell
-Invoke-RestMethod -Uri http://localhost:8080/ -UseBasicParsing
-# Deve retornar: Hello World!
-```
-
-Conectando ao Postgres
-
-1. Crie um arquivo `.env` baseado em `.env.example` e ajuste as variáveis de conexão:
-
-```powershell
-cp .env.example .env
-# abra e ajuste DB_HOST, DB_USER, DB_PASS, DB_NAME se necessário
-```
-
-2. Instale dependências e rode a aplicação (uma vez):
-
-```powershell
-npm install
-npm run build
-node dist/main.js
-```
-
-Observações:
-- A opção `DB_SYNC=true` fará o TypeORM sincronizar automaticamente o schema (apenas para desenvolvimento).
-- Para produção, mantenha `DB_SYNC=false` e use migrations.
-
-Se quiser executar em outra porta, defina a variável de ambiente `PORT` antes de iniciar:
-
-```powershell
-$env:PORT = '4000'; npm run build; node dist/main.js
-```
-
-Swagger UI
-
-Depois de iniciar a aplicação, a documentação Swagger estará disponível em:
-
-```powershell
-# por padrão
-http://localhost:8080/docs
-
-# se alterou a porta
-http://localhost:<PORT>/docs
-```
+Use um dos guias em `docs/` para operar ou contribuir com o projeto.
