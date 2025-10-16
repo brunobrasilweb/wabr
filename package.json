@@ -1,0 +1,26 @@
+{
+  "name": "wabr-nest-hello",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Minimal NestJS Hello World REST API",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "lint": "eslint '{src,test}/**/*.ts' --fix"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.3.0",
+    "@nestjs/core": "^10.3.0",
+    "@nestjs/platform-express": "^10.3.0",
+    "reflect-metadata": "^0.1.13"
+  },
+  "devDependencies": {
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.2.2",
+    "@types/node": "^20.5.1",
+    "eslint": "^8.46.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^2.8.8"
+  }
+}
