@@ -11,6 +11,12 @@ class DisconnectDto {
   user_id!: string;
 }
 
+class SendMessageDto {
+  user_id!: string;
+  to!: string; // destination jid, e.g. 5511999999999@s.whatsapp.net or phone number
+  text!: string;
+}
+
 @Controller('api/whatsapp')
 @UseGuards(TokenAuthGuard)
 export class WhatsappController {
@@ -59,6 +65,35 @@ export class WhatsappController {
     } catch (err: any) {
       this.logger.error('status error', err?.stack ?? err);
       if (err.code === 'NOT_FOUND') throw new NotFoundException('Sessão inexistente');
+      throw new InternalServerErrorException(err?.message ?? 'Internal error');
+    }
+  }
+
+  @Post('send')
+  async send(@Body() body: SendMessageDto) {
+    const { user_id, to, text } = body as any;
+    if (!user_id || !to || !text) {
+      throw new BadRequestException('Invalid params: user_id, to and text are required');
+    }
+
+    // normalize `to` to a full JID if only a number was provided
+    let toJid = String(to).trim();
+    if (!toJid.includes('@')) {
+      // assume plain phone number and append WhatsApp domain
+      toJid = `${toJid}@s.whatsapp.net`;
+    }
+
+    try {
+      const res = await this.svc.sendText(user_id, toJid, text);
+      if (!res.ok) {
+        if (res.error === 'NOT_FOUND') throw new NotFoundException('Sessão inexistente');
+        if (res.error === 'NOT_CONNECTED') throw new BadRequestException('Sessão não conectada');
+        throw new InternalServerErrorException(res.error);
+      }
+      return { status: 'sent', message_id: res.id };
+    } catch (err: any) {
+      this.logger.error('send error', err?.stack ?? err);
+      if (err instanceof BadRequestException || err instanceof NotFoundException) throw err;
       throw new InternalServerErrorException(err?.message ?? 'Internal error');
     }
   }

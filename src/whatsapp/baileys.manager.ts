@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter } from 'events';
 import QRCode from 'qrcode';
 // @whiskeysockets/baileys is ESM-only. Use dynamic import at runtime to avoid
 // `require()` of an ES module when running ts-node-dev (CommonJS loader).
@@ -27,6 +28,8 @@ type InternalSession = {
 export class BaileysManager {
   private readonly logger = new Logger(BaileysManager.name);
   private sessions = new Map<string, InternalSession>();
+  // public event emitter to notify about socket lifecycle events
+  public events = new EventEmitter();
 
   private sessionsDir = path.resolve(process.cwd(), 'sessions');
 
@@ -57,17 +60,31 @@ export class BaileysManager {
     const { version, isLatest } = await fetchLatestBaileysVersion();
     this.logger.log(`Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
+    // Baileys sometimes calls logger.trace / logger.xxx. Nest Logger doesn't
+    // implement `trace`, so provide a small shim that maps expected methods to
+    // Nest logger methods to avoid runtime TypeError: logger?.trace is not a function
+    const baileysLogger = {
+      trace: (...args: any[]) => this.logger.debug(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+      debug: (...args: any[]) => this.logger.debug(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+      info: (...args: any[]) => this.logger.log(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+      warn: (...args: any[]) => this.logger.warn(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+      error: (...args: any[]) => this.logger.error(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+    } as any;
+
     // We'll create the socket via a helper to allow reconnection attempts
-    let resolved = false;
+    let promiseResolved = false;
     const maxReconnectAttempts = 3;
     let reconnectAttempts = 0;
+    let qrEmitted = false;
+    let connectedEmitted = false;
 
     // helper to (re)create the socket and wire handlers
     const createSocket = async (): Promise<any> => {
       const sock = makeWASocket({
         auth: {
           creds: state.creds,
-          keys: makeCacheableSignalKeyStore(state.keys, this.logger as any),
+          // pass a logger shim to avoid missing `trace` method errors
+          keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
         printQRInTerminal: false,
         version,
@@ -83,7 +100,7 @@ export class BaileysManager {
 
         const { connection, qr } = update as any;
         try {
-          if (qr && !resolved) {
+          if (qr && !qrEmitted) {
             try {
               this.logger.log(`Received QR for session ${sessionId}: [length=${String(qr).length}]`);
               await fsp.mkdir(sessionDir, { recursive: true });
@@ -93,9 +110,17 @@ export class BaileysManager {
               this.logger.warn('Failed to save QR files', saveErr as any);
             }
 
-            const dataUrl = await QRCode.toDataURL(qr, { type: 'image/png' });
-            resolved = true;
-            return { type: 'qr', dataUrl };
+            qrEmitted = true;
+            // Resolve promise early with QR code
+            if (!promiseResolved) {
+              try {
+                const dataUrl = await QRCode.toDataURL(qr, { type: 'image/png' });
+                promiseResolved = true;
+                // Don't resolve here, wait for creds file or QR image
+              } catch (e) {
+                this.logger.warn('QR generation error', e as any);
+              }
+            }
           }
 
           if (connection === 'open') {
@@ -113,9 +138,16 @@ export class BaileysManager {
               this.logger.warn('Failed to read session creds file', e as any);
             }
 
-            if (!resolved) {
-              resolved = true;
-              return { type: 'connected', fileContents };
+            if (!connectedEmitted) {
+              connectedEmitted = true;
+              // IMPORTANT: Emit connected event - this MUST be done BEFORE resolving the promise
+              // so that WhatsappService listeners can update DB before the response is sent
+              try {
+                this.logger.log(`Emitting connected for sessionId=${sessionId} userId=${userId}`);
+                this.events.emit('connected', { sessionId, userId, fileContents, phoneNumber });
+              } catch (e) {
+                this.logger.warn('events.connected handler threw', e as any);
+              }
             }
           }
 
@@ -141,6 +173,13 @@ export class BaileysManager {
               }, backoff);
             } else {
               this.logger.log(`Session ${sessionId} logged out or max reconnection attempts reached, cleaning up`);
+              // emit disconnected so DB can be updated
+              try {
+                this.logger.log(`Emitting disconnected for sessionId=${sessionId} userId=${userId} statusCode=${statusCode}`);
+                this.events.emit('disconnected', { sessionId, userId, statusCode, phoneNumber });
+              } catch (e) {
+                this.logger.warn('events.disconnected handler threw', e as any);
+              }
               this.sessions.delete(sessionId);
             }
           }
@@ -157,50 +196,61 @@ export class BaileysManager {
       return sock;
     };
 
-    // Single attempt with a 60s timeout for QR generation
+    // Single attempt with a 120s timeout for connection establishment
     return new Promise<BaileysSession>(async (resolve, reject) => {
       const timeout = setTimeout(() => {
-        if (!resolved) {
-          this.logger.warn(`QR generation timeout for session ${sessionId}`);
-          resolved = true;
-          reject(new Error('QR generation timeout'));
+        if (!promiseResolved) {
+          this.logger.warn(`Connection timeout for session ${sessionId}`);
+          promiseResolved = true;
+          reject(new Error('Connection timeout'));
         }
-  }, 120_000); // 120s to allow QR generation
+      }, 120_000); // 120s to allow connection attempt
 
       // create initial socket
       try {
         const initialSock = await createSocket();
-        // listen for the first QR or connected event by polling socket updates
-        // since createSocket returns immediately and handlers return values, we
-        // rely on those handlers to set `resolved` and write files. For the
-        // Promise resolution, watch the filesystem for created creds or qr.png
-
+        
+        // Poll filesystem for either QR file or credentials file
         const watcher = setInterval(async () => {
-          if (resolved) {
+          if (promiseResolved) {
             clearInterval(watcher);
             clearTimeout(timeout);
-            // check creds file to decide connected state
-            const credsPath = path.join(sessionDir, 'creds.json');
-            try {
-              const fileContents = await fsp.readFile(credsPath, 'utf8');
-              resolve({ sessionId, userId, phoneNumber, qr: undefined, connected: true, sessionFile: sessionDir, sessionData: fileContents });
+            return;
+          }
+
+          // check creds file to decide connected state
+          const credsPath = path.join(sessionDir, 'creds.json');
+          const pngPath = path.join(sessionDir, 'qr.png');
+          
+          try {
+            const fileContents = await fsp.readFile(credsPath, 'utf8');
+            promiseResolved = true;
+            clearInterval(watcher);
+            clearTimeout(timeout);
+            resolve({ sessionId, userId, phoneNumber, qr: undefined, connected: true, sessionFile: sessionDir, sessionData: fileContents });
+            return;
+          } catch (e) {
+            // creds not ready yet
+          }
+
+          // if creds not present but qr.png is present, return qr
+          try {
+            if (fs.existsSync(pngPath)) {
+              const image = await fsp.readFile(pngPath);
+              const dataUrl = `data:image/png;base64,${image.toString('base64')}`;
+              promiseResolved = true;
+              clearInterval(watcher);
+              clearTimeout(timeout);
+              resolve({ sessionId, userId, phoneNumber, qr: dataUrl, connected: false, sessionFile: sessionDir, sessionData: null });
               return;
-            } catch (e) {
-              // if creds not present but qr.png is present, return qr
-              try {
-                const pngPath = path.join(sessionDir, 'qr.png');
-                if (fs.existsSync(pngPath)) {
-                  const image = await fsp.readFile(pngPath);
-                  const dataUrl = `data:image/png;base64,${image.toString('base64')}`;
-                  resolve({ sessionId, userId, phoneNumber, qr: dataUrl, connected: false, sessionFile: sessionDir, sessionData: null });
-                  return;
-                }
-              } catch (e) {}
             }
+          } catch (e) {
+            // ignore
           }
         }, 500);
       } catch (err) {
         clearTimeout(timeout);
+        promiseResolved = true;
         reject(err as any);
       }
     });
@@ -270,5 +320,52 @@ export class BaileysManager {
     } catch (e) {
       return null;
     }
+  }
+
+  /**
+   * Send a text message using the socket associated with a given userId.
+   * It searches active in-memory sessions first (created via createSession),
+   * then attempts to match by session files on disk.
+   */
+  async sendMessage(userId: string, to: string, text: string): Promise<{ id?: string; ok: boolean; error?: string }> {
+    // find in-memory session whose filePath contains the userId prefix
+    for (const [sessionId, info] of this.sessions.entries()) {
+      if (info.filePath.includes(`${userId}-`)) {
+        const sock = info.sock;
+        if (!sock) return { ok: false, error: 'socket-not-available' };
+        try {
+          // Baileys send API differs between versions; attempt common forms
+          if (typeof sock.sendMessage === 'function') {
+            const res = await sock.sendMessage(to, { text });
+            // response shape may vary; try to extract id
+            const key = res?.key?.id || (res?.messages && res.messages[0]?.key?.id) || undefined;
+            return { ok: true, id: key };
+          }
+          if (typeof sock.send === 'function') {
+            const res = await sock.send({ conversation: text }, to);
+            return { ok: true };
+          }
+          return { ok: false, error: 'unsupported-socket-api' };
+        } catch (err: any) {
+          this.logger.error('sendMessage error', err?.stack ?? err);
+          return { ok: false, error: String(err?.message ?? err) };
+        }
+      }
+    }
+
+    // fallback: try to locate session file on disk and assume connected (best-effort)
+    try {
+      const files = await fsp.readdir(this.sessionsDir);
+      for (const f of files) {
+        if (f.startsWith(`${userId}-`)) {
+          // no in-memory socket available
+          return { ok: false, error: 'no-active-socket' };
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    return { ok: false, error: 'session-not-found' };
   }
 }
