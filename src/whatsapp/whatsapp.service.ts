@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WhatsappConnection, WhatsappSessionStatus } from './whatsapp.entity';
 import { BaileysManager } from './baileys.manager';
+import { WebhookService } from './webhook.service';
+import { ClientsService } from '../clients/clients.service';
 
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -12,10 +14,12 @@ export class WhatsappService implements OnModuleInit {
     @InjectRepository(WhatsappConnection)
     private readonly repo: Repository<WhatsappConnection>,
     private readonly baileys: BaileysManager,
+    private readonly webhookService: WebhookService,
+    private readonly clientsService: ClientsService,
   ) {}
 
   // subscribe to BaileysManager lifecycle events to keep DB in sync
-  onModuleInit() {
+  async onModuleInit() {
     try {
       this.logger.log('Attaching BaileysManager.connected listener');
       this.baileys.events.on('connected', async (payload: any) => {
@@ -77,12 +81,93 @@ export class WhatsappService implements OnModuleInit {
           this.logger.error('Error updating DB on disconnected event', e as any);
         }
       });
+
+      this.logger.log('Attaching BaileysManager.message listener for webhook processing');
+      this.baileys.events.on('message', async (payload: any) => {
+        try {
+          const { sessionId, userId, phoneNumber, message } = payload || {};
+          if (!userId || !message) {
+            this.logger.warn('message event missing userId or message, ignoring');
+            return;
+          }
+
+          this.logger.log(
+            `Received message event: userId=${userId}, messageId=${message.messageId}, from=${message.from}`,
+          );
+
+          // TODO: In a real implementation, find the clientId from a mapping of userId -> clientId
+          // For now, we'll need to extend this logic based on your data model
+          // This assumes you have a way to map userId to clientId
+
+          // Find the client associated with this WhatsApp session
+          // This depends on your data model - you may need to store clientId in WhatsappConnection
+          // For this implementation, we'll demonstrate the webhook flow
+
+          const connection = await this.repo.findOne({ where: { userId } });
+          if (!connection) {
+            this.logger.warn(`No connection found for userId=${userId}`);
+            return;
+          }
+
+          // NOTE: In production, prefer storing clientId on WhatsappConnection.
+          // Try to obtain clientId from the connection; if missing, fall back to
+          // searching for any active webhook registered to this phone number.
+          let clientId: number | undefined = (connection as any).clientId as number | undefined;
+
+          if (!clientId) {
+            try {
+              const fallbackWebhook = await this.webhookService.findAnyActiveWebhookByPhone(connection.phoneNumber);
+              if (fallbackWebhook) {
+                clientId = fallbackWebhook.clientId;
+                this.logger.log(
+                  `Found fallback webhook for phone=${connection.phoneNumber} -> clientId=${clientId}. Using this to send webhook event.`,
+                );
+              } else {
+                this.logger.debug(`No clientId mapping found for userId=${userId} and phone=${connection.phoneNumber}`);
+              }
+            } catch (e) {
+              this.logger.warn('Error while attempting fallback webhook lookup', e as any);
+            }
+          }
+
+          if (!clientId) {
+            this.logger.debug(`Webhook processing skipped: no clientId for userId=${userId} phone=${connection.phoneNumber}`);
+          } else {
+            // Proceed to send webhook event
+            try {
+              await this.webhookService.sendWebhookEvent({
+                clientId,
+                phoneNumber: connection.phoneNumber,
+                messageId: message.messageId,
+                from: message.from,
+                to: message.to,
+                type: message.type,
+                content: message.content,
+              });
+              this.logger.log(`Webhook event enqueued for messageId=${message.messageId} clientId=${clientId}`);
+            } catch (err) {
+              this.logger.warn(`Failed to send webhook event: ${(err as any)?.message}`);
+            }
+          }
+        } catch (e) {
+          this.logger.error('Error processing message event', e as any);
+        }
+      });
     } catch (e) {
       this.logger.warn('Failed to attach baileys event listeners', e as any);
     }
+
+    // Attempt to restore any persisted Baileys sessions on startup so sockets
+    // are available immediately without waiting for the first outbound send.
+    try {
+      this.logger.log('Attempting to restore persisted Baileys sessions');
+      await this.baileys.restoreAllSessions();
+    } catch (e) {
+      this.logger.warn('Failed to restore persisted Baileys sessions on startup', e as any);
+    }
   }
 
-  async createConnection(userId: string, phoneNumber: string): Promise<{ connection: WhatsappConnection; qr?: string }> {
+  async createConnection(clientId: number | null, userId: string, phoneNumber: string): Promise<{ connection: WhatsappConnection; qr?: string }> {
     // enforce one active session per user
     const existing = await this.repo.findOne({ where: { userId } });
     if (existing && existing.sessionStatus === 'connected') {
@@ -97,6 +182,7 @@ export class WhatsappService implements OnModuleInit {
       phoneNumber,
       sessionStatus: 'reconnecting',
       sessionData: null,
+      clientId: clientId ?? null,
     } as any);
 
     const savedConn = await this.repo.save(conn as any);

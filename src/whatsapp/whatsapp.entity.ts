@@ -19,6 +19,9 @@ export class WhatsappConnection {
   @Column({ type: 'json', nullable: true })
   sessionData?: Record<string, unknown> | null;
 
+  @Column({ type: 'int', nullable: true })
+  clientId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

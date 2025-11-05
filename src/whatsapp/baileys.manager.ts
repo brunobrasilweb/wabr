@@ -19,6 +19,16 @@ export type BaileysSession = {
   sessionData?: string | null; // serialized auth file contents
 };
 
+export type IncomingMessage = {
+  messageId: string;
+  from: string;
+  to: string;
+  type: string; // 'text', 'image', 'audio', etc.
+  content?: string; // text content or metadata for non-text types
+  timestamp: number; // Unix timestamp
+  [key: string]: unknown; // additional properties
+};
+
 type InternalSession = {
   sock: any;
   filePath: string;
@@ -38,6 +48,50 @@ export class BaileysManager {
       if (!fs.existsSync(this.sessionsDir)) fs.mkdirSync(this.sessionsDir, { recursive: true });
     } catch (err) {
       this.logger.error('Failed to create sessions dir', err as any);
+    }
+  }
+
+  /**
+   * Restore all existing session directories found on disk.
+   * This should be invoked at application startup to rehydrate in-memory sockets.
+   */
+  async restoreAllSessions(): Promise<void> {
+    try {
+      const files = await fsp.readdir(this.sessionsDir);
+      for (const f of files) {
+        const full = path.join(this.sessionsDir, f);
+        try {
+          const st = await fsp.stat(full);
+          if (st.isDirectory() || f.endsWith('.json')) {
+            // session directories are created as sessionId folder; some implementations store creds as files
+            // normalize sessionDirName to directory name (if file, strip extension)
+            const sessionDirName = st.isDirectory() ? f : f.replace(/\.json$/i, '');
+            // try to read creds or session info to infer phoneNumber/userId where possible
+            // We don't have userId readily here; we'll infer userId from sessionDirName prefix
+            // sessionDirName is created as `${userId}-${timestamp}` where userId is a UUID
+            // Avoid taking only the first dash-separated segment which yields an invalid UUID like 'ef0febb4'
+            let userId = sessionDirName;
+            if (sessionDirName.length >= 36) {
+              const possible = sessionDirName.substring(0, 36);
+              const uuidRe = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+              if (uuidRe.test(possible)) {
+                userId = possible;
+              }
+            } else {
+              // fallback: keep original (may be non-uuid identifier)
+              userId = sessionDirName;
+            }
+            // best-effort phoneNumber empty string; the restored socket will emit connected with phoneNumber
+            await this.restoreSocketFromDir(sessionDirName, userId, '');
+          }
+        } catch (e) {
+          // ignore per-session errors
+          this.logger.warn(`Skipping session entry ${f} during restoreAllSessions`, e as any);
+        }
+      }
+      this.logger.log('restoreAllSessions: completed');
+    } catch (e) {
+      this.logger.error('restoreAllSessions failed', e as any);
     }
   }
 
@@ -193,6 +247,53 @@ export class BaileysManager {
         this.logger.error({ msg: 'connection.error', sessionId, err } as any);
       });
 
+      // wire message events to emit incoming messages
+      sock.ev.on('messages.upsert', (msg: any) => {
+        try {
+          if (!msg || !msg.messages || msg.messages.length === 0) {
+            return;
+          }
+
+          // Filter for incoming messages only
+          for (const message of msg.messages) {
+            if (message.key.fromMe) {
+              // Skip outgoing messages
+              continue;
+            }
+
+            const incomingMsg: IncomingMessage = {
+              messageId: message.key.id,
+              from: message.key.remoteJid || '',
+              to: state?.creds?.me?.id || phoneNumber,
+              type: message.message ? Object.keys(message.message)[0] : 'unknown',
+              timestamp: message.messageTimestamp || Date.now(),
+            };
+
+            // Extract text content if available
+            if (message.message?.conversation) {
+              incomingMsg.content = message.message.conversation;
+            } else if (message.message?.extendedTextMessage?.text) {
+              incomingMsg.content = message.message.extendedTextMessage.text;
+            } else if (message.message?.imageMessage?.caption) {
+              incomingMsg.content = message.message.imageMessage.caption;
+            } else if (message.message?.videoMessage?.caption) {
+              incomingMsg.content = message.message.videoMessage.caption;
+            }
+
+            // Emit the incoming message event
+            this.logger.debug(`Emitting incoming message: ${incomingMsg.messageId}`);
+            this.events.emit('message', {
+              sessionId,
+              userId,
+              phoneNumber,
+              message: incomingMsg,
+            });
+          }
+        } catch (err) {
+          this.logger.warn('Error processing messages.upsert event', err as any);
+        }
+      });
+
       return sock;
     };
 
@@ -323,6 +424,99 @@ export class BaileysManager {
   }
 
   /**
+   * Attempt to restore an existing session from an auth directory and create an in-memory socket.
+   * This helps when the application restarts and session files exist on disk but no socket is active in memory.
+   */
+  private async restoreSocketFromDir(sessionDirName: string, userId: string, phoneNumber: string): Promise<boolean> {
+    const sessionDir = path.join(this.sessionsDir, sessionDirName);
+    try {
+      // dynamic import of baileys similar to createSession
+      const baileys = await eval("import('@whiskeysockets/baileys')");
+      const makeWASocket = (baileys.default || baileys.makeWASocket) as any;
+      const useMultiFileAuthState = baileys.useMultiFileAuthState as any;
+      const fetchLatestBaileysVersion = baileys.fetchLatestBaileysVersion as any;
+      const makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore as any;
+      const DisconnectReason = baileys.DisconnectReason as any;
+
+      const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+      const { version } = await fetchLatestBaileysVersion();
+
+      const baileysLogger = {
+        trace: (...args: any[]) => this.logger.debug(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+        debug: (...args: any[]) => this.logger.debug(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+        info: (...args: any[]) => this.logger.log(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+        warn: (...args: any[]) => this.logger.warn(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+        error: (...args: any[]) => this.logger.error(String(args && args.length ? args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') : '')),
+      } as any;
+
+      const sock = makeWASocket({
+        auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, baileysLogger) },
+        printQRInTerminal: false,
+        version,
+        browser: ['Baileys', 'Chrome', '4.0.0'],
+      });
+
+      // store socket
+      this.sessions.set(sessionDirName, { sock, filePath: sessionDir });
+
+      // minimal event wiring: connection updates and incoming messages
+      sock.ev.on('connection.update', async (update: any) => {
+        try {
+          const { connection } = update as any;
+          if (connection === 'open') {
+            try { await saveCreds(); } catch (e) { this.logger.warn('saveCreds error during restore', e as any); }
+            this.logger.log(`Restored and connected session ${sessionDirName} for user ${userId}`);
+            this.events.emit('connected', { sessionId: sessionDirName, userId, fileContents: null, phoneNumber });
+          }
+
+          if (connection === 'close') {
+            const statusCode = (update?.lastDisconnect?.error as Boom)?.output?.statusCode;
+            this.logger.log(`Restored session ${sessionDirName} closed, status=${statusCode}`);
+            this.events.emit('disconnected', { sessionId: sessionDirName, userId, statusCode, phoneNumber });
+            this.sessions.delete(sessionDirName);
+          }
+        } catch (err) {
+          this.logger.error('Error in restore connection.update', err as any);
+        }
+      });
+
+      sock.ev.on('connection.error', (err: any) => {
+        this.logger.error({ msg: 'restore connection.error', sessionId: sessionDirName, err } as any);
+      });
+
+      sock.ev.on('messages.upsert', (msg: any) => {
+        try {
+          if (!msg || !msg.messages || msg.messages.length === 0) return;
+          for (const message of msg.messages) {
+            if (message.key.fromMe) continue;
+            const incomingMsg: IncomingMessage = {
+              messageId: message.key.id,
+              from: message.key.remoteJid || '',
+              to: state?.creds?.me?.id || phoneNumber,
+              type: message.message ? Object.keys(message.message)[0] : 'unknown',
+              timestamp: message.messageTimestamp || Date.now(),
+            };
+            if (message.message?.conversation) incomingMsg.content = message.message.conversation;
+            else if (message.message?.extendedTextMessage?.text) incomingMsg.content = message.message.extendedTextMessage.text;
+            else if (message.message?.imageMessage?.caption) incomingMsg.content = message.message.imageMessage.caption;
+            else if (message.message?.videoMessage?.caption) incomingMsg.content = message.message.videoMessage.caption;
+
+            this.logger.debug(`Emitting incoming message (restored): ${incomingMsg.messageId}`);
+            this.events.emit('message', { sessionId: sessionDirName, userId, phoneNumber, message: incomingMsg });
+          }
+        } catch (err) {
+          this.logger.warn('Error processing messages.upsert in restored socket', err as any);
+        }
+      });
+
+      return true;
+    } catch (err) {
+      this.logger.warn('Failed to restore socket from dir', sessionDirName, err as any);
+      return false;
+    }
+  }
+
+  /**
    * Send a text message using the socket associated with a given userId.
    * It searches active in-memory sessions first (created via createSession),
    * then attempts to match by session files on disk.
@@ -353,12 +547,42 @@ export class BaileysManager {
       }
     }
 
-    // fallback: try to locate session file on disk and assume connected (best-effort)
+    // fallback: try to locate session directory on disk and attempt to restore socket
     try {
       const files = await fsp.readdir(this.sessionsDir);
       for (const f of files) {
         if (f.startsWith(`${userId}-`)) {
-          // no in-memory socket available
+          // attempt to restore socket from this session directory
+          try {
+            const restored = await this.restoreSocketFromDir(f, userId, to);
+            if (restored) {
+              // try sending again using restored socket
+              const entry = this.sessions.get(f);
+              if (entry && entry.sock) {
+                const sock = entry.sock;
+                try {
+                  if (typeof sock.sendMessage === 'function') {
+                    const res = await sock.sendMessage(to, { text });
+                    const key = res?.key?.id || (res?.messages && res.messages[0]?.key?.id) || undefined;
+                    return { ok: true, id: key };
+                  }
+                  if (typeof sock.send === 'function') {
+                    await sock.send({ conversation: text }, to);
+                    return { ok: true };
+                  }
+                  return { ok: false, error: 'unsupported-socket-api' };
+                } catch (err: any) {
+                  this.logger.error('sendMessage error after restore', err?.stack ?? err);
+                  return { ok: false, error: String(err?.message ?? err) };
+                }
+              }
+            }
+          } catch (e) {
+            this.logger.warn('Failed to restore session while sending message', e as any);
+            return { ok: false, error: 'no-active-socket' };
+          }
+
+          // if not restored, report no-active-socket
           return { ok: false, error: 'no-active-socket' };
         }
       }

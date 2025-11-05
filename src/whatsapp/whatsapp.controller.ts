@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, UseGuards, Logger, BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards, Logger, BadRequestException, InternalServerErrorException, NotFoundException, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { WhatsappService } from './whatsapp.service';
 import { TokenAuthGuard } from '../auth/token-auth.guard';
 
@@ -24,14 +25,19 @@ export class WhatsappController {
   constructor(private readonly svc: WhatsappService) {}
 
   @Post('connect')
-  async connect(@Body() body: ConnectDto) {
+  async connect(@Req() req: Request, @Body() body: ConnectDto) {
     const { user_id, phone_number } = body as any;
+    const clientId = (req as Request & { user?: any }).user?.client?.id as number | undefined;
+    if (!clientId) {
+      // Shouldn't happen if TokenAuthGuard is in place, but guard defensively
+      return { statusCode: 401, message: 'Client token missing' };
+    }
     if (!user_id || !phone_number) {
       return { statusCode: 400, message: 'Invalid params' };
     }
 
     try {
-      const { connection, qr } = await this.svc.createConnection(user_id, phone_number);
+      const { connection, qr } = await this.svc.createConnection(clientId, user_id, phone_number);
       return { status: connection.sessionStatus === 'connected' ? 'connected' : 'reconnecting', qr_code: qr, session_id: connection.id };
     } catch (err: any) {
       this.logger.error('connect error', err?.stack ?? err);

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
+    "@nestjs/bull": "^10.1.2",
     "@nestjs/common": "^10.3.0",
     "@nestjs/config": "^3.0.0",
     "@nestjs/core": "^10.3.0",
@@ -17,7 +18,10 @@
     "@nestjs/swagger": "^11.2.1",
     "@nestjs/typeorm": "^10.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.6",
+    "axios": "^1.6.0",
+    "bull": "^4.13.0",
     "dotenv": "^16.3.1",
+    "ioredis": "^5.3.2",
     "pg": "^8.11.0",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.1.13",
@@ -26,6 +30,7 @@
     "typeorm": "^0.3.19"
   },
   "devDependencies": {
+    "@types/express": "^5.0.5",
     "@types/node": "^20.5.1",
     "@types/qrcode": "^1.5.5",
     "eslint": "^8.46.0",
