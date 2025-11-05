@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { ClientsModule } from './clients/clients.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 
 const TypeOrmImport = [
   TypeOrmModule.forRootAsync({
@@ -26,8 +27,9 @@ const TypeOrmImport = [
   imports: [
     // carregar .env.local se existir (dev) e fallback para .env
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env.local', '.env'] }),
-    ...TypeOrmImport,
-    ClientsModule,
+  ...TypeOrmImport,
+  ClientsModule,
+  WhatsappModule,
   ],
   controllers: [AppController],
   providers: [],
