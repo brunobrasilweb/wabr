@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { ClientsModule } from './clients/clients.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { MessagesModule } from './messages/messages.module';
 
 const TypeOrmImport = [
   TypeOrmModule.forRootAsync({
@@ -30,6 +31,7 @@ const TypeOrmImport = [
   ...TypeOrmImport,
   ClientsModule,
   WhatsappModule,
+  MessagesModule,
   ],
   controllers: [AppController],
   providers: [],

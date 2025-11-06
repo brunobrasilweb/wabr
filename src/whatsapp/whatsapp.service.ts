@@ -167,6 +167,33 @@ export class WhatsappService implements OnModuleInit {
     }
   }
 
+  /**
+   * Find a WhatsApp connection record by clientId (tenant id).
+   * Returns null when not found.
+   */
+  async getConnectionByClientId(clientId: number | null): Promise<WhatsappConnection | null> {
+    if (clientId == null) return null;
+    try {
+      return await this.repo.findOne({ where: { clientId } });
+    } catch (e) {
+      this.logger.warn('getConnectionByClientId lookup failed', e as any);
+      return null;
+    }
+  }
+
+  /**
+   * Find a WhatsApp connection by its userId (Baileys session identifier)
+   */
+  async getConnectionByUserId(userId: string | null): Promise<WhatsappConnection | null> {
+    if (!userId) return null;
+    try {
+      return await this.repo.findOne({ where: { userId } });
+    } catch (e) {
+      this.logger.warn('getConnectionByUserId lookup failed', e as any);
+      return null;
+    }
+  }
+
   async createConnection(clientId: number | null, userId: string, phoneNumber: string): Promise<{ connection: WhatsappConnection; qr?: string }> {
     // enforce one active session per user
     const existing = await this.repo.findOne({ where: { userId } });
@@ -244,7 +271,7 @@ export class WhatsappService implements OnModuleInit {
     }
 
     try {
-      const res = await this.baileys.sendMessage(userId, to, text);
+      const res = await this.baileys.sendMessage(userId, to, 'text', { text });
       if (!res.ok) return { ok: false, error: res.error };
       return { ok: true, id: res.id };
     } catch (err: any) {

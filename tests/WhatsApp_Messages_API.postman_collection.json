@@ -1,0 +1,322 @@
+{
+  "info": {
+    "name": "WhatsApp Messages API",
+    "description": "Collection for testing WhatsApp Messages API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Send Text Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"text\",\n  \"text\": \"Olá! Esta é uma mensagem de teste.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Image Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"image\",\n  \"mediaUrl\": \"https://via.placeholder.com/300\",\n  \"caption\": \"Uma imagem de teste\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Video Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"video\",\n  \"mediaUrl\": \"https://example.com/video.mp4\",\n  \"caption\": \"Um vídeo interessante\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Audio Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"audio\",\n  \"mediaUrl\": \"https://example.com/audio.ogg\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Document",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"document\",\n  \"mediaUrl\": \"https://example.com/documento.pdf\",\n  \"caption\": \"Documento importante\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Location",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"location\",\n  \"latitude\": -23.5505,\n  \"longitude\": -46.6333,\n  \"caption\": \"São Paulo, Brasil\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Contact",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"contact\",\n  \"name\": \"João Silva\",\n  \"phone\": \"5511988888888\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Send Sticker",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"recipient\": \"5511999999999\",\n  \"type\": \"sticker\",\n  \"mediaUrl\": \"https://example.com/sticker.webp\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/send",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "send"]
+        }
+      }
+    },
+    {
+      "name": "Receive Message (Webhook)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"from\": \"5511988888888\",\n  \"messageId\": \"wamsgid_webhook_test_001\",\n  \"type\": \"text\",\n  \"text\": \"Olá! Recebi sua mensagem!\",\n  \"timestamp\": \"2025-11-05T17:59:00Z\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/receive",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "receive"]
+        }
+      }
+    },
+    {
+      "name": "Get Message by ID",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/messages/{{message_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "{{message_id}}"]
+        }
+      }
+    },
+    {
+      "name": "Forward Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messageId\": \"{{message_id}}\",\n  \"recipients\": [\n    \"5511977777777\",\n    \"5511966666666\",\n    \"5511955555555\"\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/messages/forward",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "forward"]
+        }
+      }
+    },
+    {
+      "name": "Delete Message",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer test-token-123",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/messages/{{message_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "messages", "{{message_id}}"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "message_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

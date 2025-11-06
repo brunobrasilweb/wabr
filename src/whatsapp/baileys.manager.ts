@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import QRCode from 'qrcode';
+import axios from 'axios';
 // @whiskeysockets/baileys is ESM-only. Use dynamic import at runtime to avoid
 // `require()` of an ES module when running ts-node-dev (CommonJS loader).
 // We'll import the needed symbols dynamically inside createSession().
@@ -517,26 +518,136 @@ export class BaileysManager {
   }
 
   /**
-   * Send a text message using the socket associated with a given userId.
+   * Build a Baileys-compatible payload from our MessageType/content shape.
+   */
+  private buildPayloadForBaileys(type: string, content: any): any {
+    switch ((type || '').toLowerCase()) {
+      case 'image':
+        return { image: { url: content?.mediaUrl }, caption: content?.caption };
+      case 'video':
+        return { video: { url: content?.mediaUrl }, caption: content?.caption };
+      case 'audio':
+        return { audio: { url: content?.mediaUrl } };
+      case 'document':
+        return { document: { url: content?.mediaUrl }, fileName: content?.caption || 'file' };
+      case 'sticker':
+        return { sticker: { url: content?.mediaUrl } };
+      case 'location':
+        return {
+          location: {
+            degreesLatitude: content?.latitude || 0,
+            degreesLongitude: content?.longitude || 0,
+          },
+        };
+      case 'contact':
+        // send as vcard contact message when possible
+        if (content?.name && content?.phone) {
+          const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${String(content.name)}\nTEL:${String(content.phone)}\nEND:VCARD`;
+          return { contacts: { displayName: content.name, contacts: [{ vcard }] } };
+        }
+        return { text: content?.text || '' };
+      case 'text':
+      default:
+        return { text: content?.text || '' };
+    }
+  }
+
+  /**
+   * Download a media URL and return { data: Buffer, mimeType, fileName }
+   */
+  private async fetchMediaAsBuffer(url: string): Promise<{ data: Buffer; mimeType?: string; fileName?: string }> {
+    const attempts = [
+      { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': '*/*', 'Referer': 'https://file-examples.com/' },
+      { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': '*/*' },
+      { 'User-Agent': 'wabr/1.0', 'Accept': '*/*' },
+    ];
+
+    for (const hdrs of attempts) {
+      try {
+        const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 120000, maxRedirects: 10, headers: hdrs, validateStatus: (s) => s >= 200 && s < 400 });
+        const data = Buffer.from(res.data);
+        const mimeType = res.headers['content-type'];
+        // derive filename from URL path
+        let fileName: string | undefined = undefined;
+        try {
+          const parsed = new URL(url);
+          const pathname = parsed.pathname || '';
+          const name = pathname.split('/').pop();
+          if (name) fileName = name;
+        } catch (e) {
+          // ignore
+        }
+        return { data, mimeType, fileName };
+      } catch (err) {
+        const status = (err as any)?.response?.status;
+        this.logger.warn(`fetchMediaAsBuffer attempt failed for ${url} status=${status} ua=${String(hdrs['User-Agent'])} msg=${(err as any)?.message}`);
+        // if 403 try next header set, otherwise continue to next attempt
+        if (status && status !== 403) {
+          // for non-403 errors, try next attempt as well
+          continue;
+        }
+        // if 403, try next header set; if last attempt, throw
+      }
+    }
+
+    this.logger.error(`fetchMediaAsBuffer error for ${url}: all attempts failed`);
+    throw new Error(`Failed to fetch stream from ${url}`);
+  }
+
+  /**
+   * Replace remote URL entries in payload with Buffer-based media so Baileys doesn't need to fetch.
+   */
+  private async resolveRemoteMedia(payload: any): Promise<any> {
+    if (!payload || typeof payload !== 'object') return payload;
+    const mediaKeys = ['image', 'video', 'audio', 'document', 'sticker'];
+    for (const key of mediaKeys) {
+      const entry = payload[key];
+      if (entry && typeof entry === 'object' && entry.url) {
+        const url = entry.url;
+        // download
+        const media = await this.fetchMediaAsBuffer(url);
+        // replace url with buffer
+        payload[key] = media.data;
+        // attach mimetype if available
+        if (media.mimeType) payload.mimetype = media.mimeType;
+        // ensure fileName for documents
+        if (key === 'document') payload.fileName = payload.fileName || media.fileName || 'file';
+        return payload;
+      }
+    }
+    return payload;
+  }
+
+  /**
+   * Send a message (supports multiple types) using the socket associated with a given userId.
    * It searches active in-memory sessions first (created via createSession),
    * then attempts to match by session files on disk.
    */
-  async sendMessage(userId: string, to: string, text: string): Promise<{ id?: string; ok: boolean; error?: string }> {
+  async sendMessage(userId: string, to: string, type: string, content: any): Promise<{ id?: string; ok: boolean; error?: string }> {
     // find in-memory session whose filePath contains the userId prefix
     for (const [sessionId, info] of this.sessions.entries()) {
       if (info.filePath.includes(`${userId}-`)) {
         const sock = info.sock;
         if (!sock) return { ok: false, error: 'socket-not-available' };
         try {
+          let payload = this.buildPayloadForBaileys(type, content);
+          // If payload contains remote URLs for media, try to download them and convert to Buffers
+          try {
+            payload = await this.resolveRemoteMedia(payload);
+          } catch (e) {
+            this.logger.warn(`Failed to resolve remote media for send: ${(e as any)?.message}`);
+            // propagate error so caller knows media couldn't be fetched
+            throw e;
+          }
           // Baileys send API differs between versions; attempt common forms
           if (typeof sock.sendMessage === 'function') {
-            const res = await sock.sendMessage(to, { text });
-            // response shape may vary; try to extract id
+            const res = await sock.sendMessage(to, payload);
             const key = res?.key?.id || (res?.messages && res.messages[0]?.key?.id) || undefined;
             return { ok: true, id: key };
           }
           if (typeof sock.send === 'function') {
-            const res = await sock.send({ conversation: text }, to);
+            const text = payload?.text || '';
+            await sock.send({ conversation: text }, to);
             return { ok: true };
           }
           return { ok: false, error: 'unsupported-socket-api' };
@@ -561,12 +672,20 @@ export class BaileysManager {
               if (entry && entry.sock) {
                 const sock = entry.sock;
                 try {
+                  let payload = this.buildPayloadForBaileys(type, content);
+                  try {
+                    payload = await this.resolveRemoteMedia(payload);
+                  } catch (e) {
+                    this.logger.warn(`Failed to resolve remote media for send after restore: ${(e as any)?.message}`);
+                    throw e;
+                  }
                   if (typeof sock.sendMessage === 'function') {
-                    const res = await sock.sendMessage(to, { text });
+                    const res = await sock.sendMessage(to, payload);
                     const key = res?.key?.id || (res?.messages && res.messages[0]?.key?.id) || undefined;
                     return { ok: true, id: key };
                   }
                   if (typeof sock.send === 'function') {
+                    const text = payload?.text || '';
                     await sock.send({ conversation: text }, to);
                     return { ok: true };
                   }
@@ -592,4 +711,36 @@ export class BaileysManager {
 
     return { ok: false, error: 'session-not-found' };
   }
+
+  /**
+   * Get socket for a userId (used for direct message operations)
+   */
+  async getSocketForUser(userId: string): Promise<any | null> {
+    // find in-memory session
+    for (const [sessionId, info] of this.sessions.entries()) {
+      if (info.filePath.includes(`${userId}-`)) {
+        return info.sock || null;
+      }
+    }
+
+    // try to restore from disk
+    try {
+      const files = await fsp.readdir(this.sessionsDir);
+      for (const f of files) {
+        if (f.startsWith(`${userId}-`)) {
+          const restored = await this.restoreSocketFromDir(f, userId, '');
+          if (restored) {
+            const entry = this.sessions.get(f);
+            return entry?.sock || null;
+          }
+        }
+      }
+    } catch (e) {
+      this.logger.warn('Failed to get socket for user', e as any);
+    }
+
+    return null;
+  }
 }
+
+// Keep this for compatibility - old sendMessage signature is still above
